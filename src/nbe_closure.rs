@@ -8,18 +8,16 @@ enum Value {
     App(Box<Value>, Box<Value>),
 }
 
-
-
 /// eval env tm =
 ///      match tm with
 ///      | Idx idx   -> List.nth env idx
 ///      | Lam tm'   -> VLam(env, tm')
 ///      | App(f, a) -> apply_val (eval env f) (eval env a)
-fn eval(env: Vec<Value>, tm: Term) -> Value {
+fn eval(env: &[Value], tm: Term) -> Value {
     match tm {
-        Term::Idx(idx) => env[idx].clone(),
-        Term::Lam(tm) => Value::Lam(env, *tm),
-        Term::App(f, a) => apply_val(eval(env.clone(), *f), eval(env, *a)),
+        Term::Idx(idx) => env[env.len() - idx - 1].clone(),
+        Term::Lam(tm) => Value::Lam(env.to_vec(), *tm),
+        Term::App(f, a) => apply_val(eval(env, *f), eval(env, *a)),
     }
 }
 
@@ -29,7 +27,7 @@ fn eval(env: Vec<Value>, tm: Term) -> Value {
 ///      | _               -> VApp(vf, va)
 fn apply_val(vf: Value, va: Value) -> Value {
     match vf {
-        Value::Lam(env, body) => eval([vec![va], env.to_vec()].concat(), body),
+        Value::Lam(mut env, body) => eval(&{env.push(va);env}, body),
         _ => Value::App(Box::new(vf), Box::new(va)),
     }
 }
@@ -42,11 +40,11 @@ fn apply_val(vf: Value, va: Value) -> Value {
 fn quote(level: usize, value: Value) -> Term {
     match value {
         Value::Lvl(lvl) => Term::Idx(level - lvl - 1),
-        Value::Lam(env, body) => Term::Lam(
+        Value::Lam(mut env, body) => Term::Lam(
             Box::new(
                 quote(
                     level + 1,
-                    eval([vec![Value::Lvl(level)], env.to_vec()].concat(), body)
+                    eval(&{env.push(Value::Lvl(level));env}, body)
                 )
             )
         ),
@@ -58,5 +56,5 @@ fn quote(level: usize, value: Value) -> Term {
 }
 
 pub fn normalize(t: Term) -> Term {
-    quote(0, eval(vec![], t))
+    quote(0, eval(&[], t))
 }
