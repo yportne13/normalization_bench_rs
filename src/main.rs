@@ -1,4 +1,5 @@
 pub mod nbe_closure;
+pub mod list;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Term {

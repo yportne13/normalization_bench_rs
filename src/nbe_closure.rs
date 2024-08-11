@@ -1,10 +1,10 @@
-use crate::Term;
+use crate::{list::List, Term};
 
 
 #[derive(Debug, Clone)]
 enum Value {
     Lvl(usize),
-    Lam(Vec<Value>, Term),
+    Lam(List<Value>, Term),
     App(Box<Value>, Box<Value>),
 }
 
@@ -13,11 +13,11 @@ enum Value {
 ///      | Idx idx   -> List.nth env idx
 ///      | Lam tm'   -> VLam(env, tm')
 ///      | App(f, a) -> apply_val (eval env f) (eval env a)
-fn eval(env: &[Value], tm: Term) -> Value {
+fn eval(env: List<Value>, tm: Term) -> Value {
     match tm {
-        Term::Idx(idx) => env[env.len() - idx - 1].clone(),
-        Term::Lam(tm) => Value::Lam(env.to_vec(), *tm),
-        Term::App(f, a) => apply_val(eval(env, *f), eval(env, *a)),
+        Term::Idx(idx) => env.iter().nth(idx).unwrap().clone(),
+        Term::Lam(tm) => Value::Lam(env, *tm),
+        Term::App(f, a) => apply_val(eval(env.clone(), *f), eval(env, *a)),
     }
 }
 
@@ -27,7 +27,7 @@ fn eval(env: &[Value], tm: Term) -> Value {
 ///      | _               -> VApp(vf, va)
 fn apply_val(vf: Value, va: Value) -> Value {
     match vf {
-        Value::Lam(mut env, body) => eval(&{env.push(va);env}, body),
+        Value::Lam(env, body) => eval(env.prepend(va), body),
         _ => Value::App(Box::new(vf), Box::new(va)),
     }
 }
@@ -40,11 +40,11 @@ fn apply_val(vf: Value, va: Value) -> Value {
 fn quote(level: usize, value: Value) -> Term {
     match value {
         Value::Lvl(lvl) => Term::Idx(level - lvl - 1),
-        Value::Lam(mut env, body) => Term::Lam(
+        Value::Lam(env, body) => Term::Lam(
             Box::new(
                 quote(
                     level + 1,
-                    eval(&{env.push(Value::Lvl(level));env}, body)
+                    eval(env.prepend(Value::Lvl(level)), body)
                 )
             )
         ),
@@ -56,5 +56,5 @@ fn quote(level: usize, value: Value) -> Term {
 }
 
 pub fn normalize(t: Term) -> Term {
-    quote(0, eval(&[], t))
+    quote(0, eval(List::new(), t))
 }
