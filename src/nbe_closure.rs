@@ -14,6 +14,11 @@ enum Value {
 ///      | Lam tm'   -> VLam(env, tm')
 ///      | App(f, a) -> apply_val (eval env f) (eval env a)
 fn eval(env: List<Value>, tm: Term) -> Value {
+    /*println!(
+        "eval: [{}] {:?}",
+        env.iter().map(|x| format!("{:?}", x)).reduce(|a, b| a + ", " + &b).unwrap_or(String::new()),
+        tm,
+    );*/
     match tm {
         Term::Idx(idx) => env.iter().nth(idx).unwrap().clone(),
         Term::Lam(tm) => Value::Lam(env, *tm),

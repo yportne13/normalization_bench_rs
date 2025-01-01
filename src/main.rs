@@ -1,5 +1,11 @@
+#![feature(pattern)]
+
 pub mod nbe_closure;
+pub mod nbe_closure_dt;
+pub mod locally;
 pub mod list;
+pub mod dt;
+mod parser;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Term {
@@ -44,16 +50,47 @@ fn church_add() -> Term {
     )
 }
 
+fn open(image: &Term, scope: &Term) -> Term {
+    fn go(outer: usize, image: &Term, term: &Term) -> Term {
+        match term {
+            Term::Idx(fbv) => if *fbv == outer {image.clone()} else {Term::Idx(*fbv)},
+            Term::App(l, r) => Term::App(
+                Box::new(go(outer, image, l)),
+                Box::new(go(outer, image, r))
+            ),
+            Term::Lam(b) => Term::Lam(Box::new(go(outer + 1, image, b))),
+        }
+    }
+
+    go(0, image, scope)
+}
+
+fn whnf(term: &Term, mut vec: Vec<Term>) -> Term {
+    match term {
+        Term::App(l, r) => {
+            vec.push(*r.clone());
+            whnf(l, vec)
+        },
+        Term::Lam(body) if !vec.is_empty() => {
+            let a = vec.pop().unwrap();
+            whnf(&open(&a, body), vec)
+        },
+        a => vec.iter().fold(a.clone(), |x, y| Term::App(Box::new(x), Box::new(y.clone())))
+    }
+}
+
 fn main() {
     //println!("Hello, world!");
-    let i = 1000;
+    let i = 20;
     let a = church(i);
     let b = church(i);
     let add = apply(church_add(), vec![a, b]);
     let start = std::time::Instant::now();
-    let result = nbe_closure::normalize(add);
+    //let result = nbe_closure::normalize(add);
+    let result = whnf(&add, vec![]);
     let end = start.elapsed();
     println!("{:?}s", end.as_secs_f64());
+    println!("{:?}", result);
     let check = church(i + i);
     println!("{}", result == check);
 }
