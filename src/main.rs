@@ -2,10 +2,12 @@
 
 pub mod nbe_closure;
 pub mod nbe_closure_dt;
+//pub mod nbe_dt_holes;
 pub mod locally;
 pub mod list;
 pub mod dt;
 mod parser;
+mod pattern;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Term {

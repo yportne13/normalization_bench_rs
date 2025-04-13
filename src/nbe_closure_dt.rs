@@ -20,19 +20,14 @@ pub enum Term {
     Let(String, Box<Term>, Box<Term>, Box<Term>),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 enum Value {
     Lvl(usize),
     App(Box<Value>, Box<Value>),
     Lam(String, Closure),
     Pi(String, Box<Value>, Closure),
+    #[default]
     U,
-}
-
-impl Default for Value {
-    fn default() -> Self {
-        Value::U
-    }
 }
 
 #[derive(Debug, Clone)]
@@ -59,7 +54,11 @@ fn eval(env: List<Value>, tm: Term) -> Value {
     );*/
     match tm {
         Term::Idx(idx) => env.iter().nth(idx).unwrap().clone(),
-        Term::App(f, a) => apply_val(eval(env.clone(), *f), eval(env, *a)),
+        //Term::App(f, a) => apply_val(eval(env.clone(), *f), eval(env, *a)),
+        Term::App(f, a) => match (eval(env.clone(), *f), eval(env, *a)) {
+            (Value::Lam(_, body), va) => eval(body.0.prepend(va), body.1),
+            (vf, va) => Value::App(Box::new(vf), Box::new(va)),
+        },
         Term::Lam(name, t) => Value::Lam(name, Closure(env, *t)),
         Term::Pi(name, term, term1) => Value::Pi(name, Box::new(eval(env.clone(), *term)), Closure(env, *term1)),
         Term::Let(_, _, term1, term2) => eval(
@@ -161,9 +160,11 @@ impl Cxt {
     fn bind(&self, x: String, a: Value) -> Self {
         let env = List::new();
         env.prepend(Value::Lvl(self.lvl));
+        let mut types = self.types.clone();
+        types.push((x, a));
         Cxt {
             env,
-            types: vec![(x, a)],
+            types,
             lvl: self.lvl + 1,
             pos: self.pos,
         }
@@ -171,11 +172,11 @@ impl Cxt {
 
     // Extend Cxt with a definition
     fn define(&self, x: String, t: Value, a: Value) -> Self {
-        let env = List::new();
-        env.prepend(t);
+        let mut types = self.types.clone();
+        types.push((x, a));
         Cxt {
-            env,
-            types: vec![(x, a)],
+            env: self.env.prepend(t),
+            types,
             lvl: self.lvl + 1,
             pos: self.pos,
         }
@@ -243,12 +244,10 @@ fn infer(cxt: &Cxt, t: &Raw) -> Result<(Term, Value), (String, usize)> {
         //Raw::RSrcPos(pos, t) => infer(&Cxt { pos: *pos, ..cxt.clone() }, t),
 
         Raw::Var(x) => {
-            let mut i = 0;
-            for (x_, a) in &cxt.types {
+            for (i, (x_, a)) in cxt.types.iter().rev().enumerate() {
                 if x == x_ {
                     return Ok((Term::Idx(i), a.clone()));
                 }
-                i += 1;
             }
             report(cxt, &format!("variable out of scope: {}", x))
         }
@@ -277,14 +276,14 @@ fn infer(cxt: &Cxt, t: &Raw) -> Result<(Term, Value), (String, usize)> {
             Ok((Term::Pi(x.clone(), Box::new(a_tm), Box::new(b_tm)), Value::U))
         }
 
-        Raw::Let(x, a, t, u) => {
-            let a_tm = check(cxt, a, &Value::U)?;
-            let va = eval(cxt.env.clone(), a_tm.clone());
-            let t_tm = check(cxt, t, &va)?;
+        Raw::Let(name, typ, body, u) => {
+            let typ_tm = check(cxt, typ, &Value::U)?;
+            let vtyp = eval(cxt.env.clone(), typ_tm.clone());
+            let t_tm = check(cxt, body, &vtyp)?;
             let vt = eval(cxt.env.clone(), t_tm.clone());
-            let new_cxt = cxt.define(x.clone(), vt, va);
+            let new_cxt = cxt.define(name.clone(), vt, vtyp);
             let (u_tm, uty) = infer(&new_cxt, u)?;
-            Ok((Term::Let(x.clone(), Box::new(a_tm), Box::new(t_tm), Box::new(u_tm)), uty))
+            Ok((Term::Let(name.clone(), Box::new(typ_tm), Box::new(t_tm), Box::new(u_tm)), uty))
         }
     }
 }
