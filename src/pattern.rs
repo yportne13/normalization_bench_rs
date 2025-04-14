@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::rc::Rc;
+use std::vec;
 
 // 使用整数作为变量以便于生成
 type Var = i32;
@@ -8,12 +9,13 @@ type TypeName = String;
 type Constructor = String;
 
 #[derive(Debug, Clone)]
-enum Type {
+pub enum Type {
     Cons(TypeName, Vec<(Constructor, Vec<Type>)>),
+    Rec(TypeName),
 }
 
 #[derive(Debug, Clone)]
-enum Pattern {
+pub enum Pattern {
     PAny,
     PCon(Constructor, Vec<Pattern>),
 }
@@ -21,42 +23,45 @@ enum Pattern {
 // 为了简单起见，仅用于区分不同的匹配体
 type MatchBody = i32;
 
-static mut SEED: i32 = 0;
-
-fn fresh() -> i32 {
-    unsafe {
-        SEED += 1;
-        SEED
-    }
-}
-
 #[derive(Debug, Clone)]
-enum DecisionTree {
+pub enum DecisionTree {
     Fail,
     Leaf(MatchBody),
     Branch(TypeName, Var, Vec<(Constructor, Vec<Var>, Rc<DecisionTree>)>),
 }
 
 #[derive(Debug, Clone)]
-enum Warning {
+pub enum Warning {
     Unreachable(MatchBody),
     Unmatched(Pattern),
 }
 
-struct Compiler {
+pub struct Compiler {
     warnings: Vec<Warning>,
     reachable: HashMap<MatchBody, ()>,
+    seed: i32,
+    rec_table: HashMap<TypeName, Vec<(Constructor, Vec<Type>)>>,
 }
 
 impl Compiler {
-    fn new() -> Self {
+    pub fn new() -> Self {
+        let mut rec_table = HashMap::new();
+        let nat_type = vec![("zero".to_string(), vec![]), ("succ".to_string(), vec![Type::Rec("Nat".to_string())])];
+        rec_table.insert("Nat".to_string(), nat_type);
         Compiler {
             warnings: Vec::new(),
             reachable: HashMap::new(),
+            seed: 0,
+            rec_table,
         }
     }
 
-    fn fill_context(&self, ctx: &MatchContext, pat: &Pattern) -> Pattern {
+    fn fresh(&mut self) -> i32 {
+        self.seed += 1;
+        self.seed
+    }
+
+    fn fill_context(ctx: &MatchContext, pat: &Pattern) -> Pattern {
         match ctx {
             MatchContext::Outermost => pat.clone(),
             MatchContext::InCons {
@@ -69,21 +74,23 @@ impl Compiler {
                 new_before.reverse();
                 new_before.push(pat.clone());
                 new_before.extend(after.clone());
-                self.fill_context(parent, &Pattern::PCon(constr.clone(), new_before))
+                Self::fill_context(parent, &Pattern::PCon(constr.clone(), new_before))
             }
         }
     }
 
-    fn next_hole(&self, ctx: &MatchContext, pat: &Pattern) -> MatchContext {
+    fn next_hole(ctx: &MatchContext, pat: &Pattern) -> MatchContext {
+        println!(" >>>  {:?}", ctx);
+        println!(" >>>> {:?}", pat);
         match ctx {
-            MatchContext::Outermost => panic!("next_hole"),
+            MatchContext::Outermost => MatchContext::Outermost,
             MatchContext::InCons {
                 parent,
                 constr,
                 before,
                 after,
             } => match after[..] {
-                [] => self.next_hole(parent, &Pattern::PCon(constr.clone(), before.clone())),
+                [] => Self::next_hole(parent, &Pattern::PCon(constr.clone(), before.clone())),
                 _ => MatchContext::InCons {
                     parent: parent.clone(),
                     constr: constr.clone(),
@@ -109,13 +116,13 @@ impl Compiler {
                 _ => panic!("impossible"),
             },
             [(var, typ), heads_rest @ ..] => {
-                let is_necessary = arms.iter().any(|arm| match arm.pats[..] {
-                    [Pattern::PCon(..), ..] => true,
-                    _ => false,
-                });
+                println!("------------------");
+                println!("{:?}", arms);
+                println!("   {:?}", context);
+                let is_necessary = arms.iter().any(|arm| matches!(arm.pats[..], [Pattern::PCon(..), ..]));
 
                 if !is_necessary {
-                    let new_context = self.next_hole(context, &Pattern::PAny);
+                    let new_context = Self::next_hole(context, &Pattern::PAny);
                     let new_arms = arms
                         .iter()
                         .map(|arm| MatchArm {
@@ -125,8 +132,13 @@ impl Compiler {
                         .collect::<Vec<_>>();
                     self.compile_aux(heads_rest, &new_arms, &new_context)
                 } else {
-                    let (Type::Cons(typename, constrs)) = typ else {
-                        panic!("impossible");
+                    let (typename, constrs) = match typ {
+                        Type::Cons(typename, constrs) => {
+                            (typename, constrs.clone())
+                        },
+                        Type::Rec(typename) => {
+                            (typename, self.rec_table.get(typename).unwrap().clone())
+                        }
                     };
 
                     let decision_tree_branches = constrs
@@ -134,7 +146,7 @@ impl Compiler {
                         .map(|(constr, item_typs)| {
                             let new_heads = item_typs
                                 .iter()
-                                .map(|typ| (fresh(), typ.clone()))
+                                .map(|typ| (self.fresh(), typ.clone()))
                                 .collect::<Vec<_>>();
                             let remaining_arms = arms
                                 .iter()
@@ -161,7 +173,7 @@ impl Compiler {
                                 .collect::<Vec<_>>();
 
                             let subtree = if remaining_arms.is_empty() {
-                                let unmatched = self.fill_context(
+                                let unmatched = Self::fill_context(
                                     context,
                                     &Pattern::PCon(constr.clone(), vec![Pattern::PAny; item_typs.len()]),
                                 );
@@ -172,7 +184,7 @@ impl Compiler {
                                     if heads_rest.is_empty() {
                                         context.clone()
                                     } else {
-                                        self.next_hole(context, &Pattern::PCon(constr.clone(), vec![]))
+                                        Self::next_hole(context, &Pattern::PCon(constr.clone(), vec![]))
                                     }
                                 } else {
                                     MatchContext::InCons {
@@ -203,11 +215,7 @@ impl Compiler {
         }
     }
 
-    fn compile(&mut self, typ: &Type, arms: &[(Pattern, MatchBody)]) -> (Rc<DecisionTree>, Vec<Warning>) {
-        let reachable = HashMap::new();
-        self.reachable = reachable;
-        self.warnings = Vec::new();
-
+    pub fn compile(&mut self, typ: &Type, arms: &[(Pattern, MatchBody)]) -> (Rc<DecisionTree>, Vec<Warning>) {
         let tree = self.compile_aux(
             &[(0, typ.clone())],
             &arms.iter()
@@ -257,6 +265,7 @@ fn test() {
     let pair_type = |x: Type, y: Type| Type::Cons("pair".to_string(), vec![("Pair".to_string(), vec![x, y])]);
     let option_type = |x: Type| Type::Cons("option".to_string(), vec![("None".to_string(), vec![]), ("Some".to_string(), vec![x])]);
     let either_type = |x: Type, y: Type| Type::Cons("either".to_string(), vec![("Left".to_string(), vec![x]), ("Right".to_string(), vec![y])]);
+    let nat_type = Type::Cons("Nat".to_string(), vec![("zero".to_string(), vec![]), ("succ".to_string(), vec![Type::Rec("Nat".to_string())])]);
 
     let p_any = Pattern::PAny;
     let p_true = Pattern::PCon("True".to_string(), vec![]);
@@ -266,6 +275,9 @@ fn test() {
     let p_some = |p: Pattern| Pattern::PCon("Some".to_string(), vec![p]);
     let p_left = |p: Pattern| Pattern::PCon("Left".to_string(), vec![p]);
     let p_right = |p: Pattern| Pattern::PCon("Right".to_string(), vec![p]);
+
+    let p_zero = Pattern::PCon("zero".to_string(), vec![]);
+    let p_succ = |p: Pattern| Pattern::PCon("succ".to_string(), vec![p]);
 
     let ex1 = (
         bool_type.clone(),
@@ -314,8 +326,31 @@ fn test() {
         ],
     );
 
+    let ex7 = (
+        nat_type,
+        vec![
+            (p_zero.clone(), 1),
+            (p_succ(p_zero.clone()), 2),
+            //(p_succ(p_any.clone()), 2),
+            (p_succ(p_succ(p_any.clone())), 3),
+            //(p_succ(p_succ(p_any.clone())), 3),
+        ]
+    );
+
+    let ex8 = (
+        option_type(bool_type.clone()),
+        vec![
+            (p_none.clone(), 1),
+            //(p_some(p_any.clone()), 2),
+            (p_some(p_true.clone()), 2),
+            (p_some(p_false.clone()), 3),
+        ],
+    );
+
     let mut compiler = Compiler::new();
-    let (tree, warnings) = compiler.compile(&ex6.0, &ex6.1);
+    //let (tree, warnings) = compiler.compile(&ex6.0, &ex6.1);
+    let (tree, warnings) = compiler.compile(&ex7.0, &ex7.1);
+    //let (tree, warnings) = compiler.compile(&ex8.0, &ex8.1);
     println!("{:?}", tree);
     println!("{:?}", warnings);
 }
